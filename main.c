@@ -7,9 +7,16 @@
 #define PI 3.14159265358979323846264338327950288
 #define SCREEN_WIDTH 800
 #define SCREEN_HEIGHT 600
-#define MAX_ASTEROIDS 10
-#define THRUST 100
-#define ROTATE_DEGREES 5
+#define SHIP_SIDES 3
+#define SHIP_SIZE 15
+#define SHIP_THRUST 100
+#define SHIP_ROTATE_DEGREES 5
+
+#define ASTEROIDS_SIDES 5
+#define ASTEROIDS_MAX 10
+#define ASTEROIDS_MIN_SIZE 20
+#define ASTEROIDS_MAX_SPEED 50
+#define ASTEROIDS_ROTATE_DEGREES 1
 
 typedef struct {
     bool isRunning;
@@ -46,20 +53,22 @@ void cleanup(SDL_Window *window, SDL_Renderer *renderer, TTF_Font *font, SDL_Tex
 void handleInput(SDL_Event *event, InputState *inputState);
 void updateGame(Ship *ship, Asteroid *asteroids, InputState *input, float deltaTime);
 void renderGame(SDL_Renderer *renderer, Ship *ship, Asteroid *asteroids, UIElements *ui, float fps);
+void drawPolygon(SDL_Renderer *renderer, int sidesCount, int sideLen, int cx, int cy, float angleRad);
 SDL_Texture* renderText(SDL_Renderer *renderer, TTF_Font *font, const char *text, SDL_Rect *textRect, SDL_Color color, int x, int y);
 
-void initAsteroids(Asteroid *asteroids);
-void updateAsteroids(Asteroid *asteroids, float deltaTime);
-void drawAsteroids(SDL_Renderer *renderer, Asteroid *asteroids);
-
 void drawShip(SDL_Renderer *renderer, Ship *ship);
-void rotateShip(Ship *ship, int degrees);
 void updatePosition(Ship *ship, float deltaTime);
 void applyThrust(Ship *ship, float thrustPower);
 void updateVelocity(Ship *ship, float deltaTime);
 void stopAcceleration(Ship *ship);
 
+void initAsteroids(Asteroid *asteroids);
+void updateAsteroids(Asteroid *asteroids, float deltaTime);
+void drawAsteroids(SDL_Renderer *renderer, Asteroid *asteroids);
+
+void turn(float *angle, int degrees);
 void wrapAround(float *x, float *y);
+float degToRad(float degrees);
 
 
 int main(void) {
@@ -77,7 +86,7 @@ int main(void) {
     UIElements ui = { fpsTexture, &fpsRect, angleTexture, &angleRect, font };
 
     Ship ship = { SCREEN_WIDTH/2, SCREEN_HEIGHT/2, 90, 0.0, 0.0, 0.0, 0.0, false};
-    Asteroid asteroids[MAX_ASTEROIDS];
+    Asteroid asteroids[ASTEROIDS_MAX];
     initAsteroids(asteroids);
 
     InputState input = { true, false, false, false };
@@ -116,59 +125,41 @@ int main(void) {
     return 0;
 }
 
+void drawPolygon(SDL_Renderer *renderer, int sidesCount, int sideLen, int cx, int cy, float angleRad) {
+    const int size = sidesCount + 1;
+    const float angleStep = 2 * PI / sidesCount; // regural polygon has n angles = n sides
+
+    int sx[size];
+    int sy[size];
+
+    //define a shape
+    for(int i = 0; i < size; i++) {
+        sx[i] = sideLen * cos(i * angleStep);
+        sy[i] = sideLen * sin(i * angleStep);
+    }
+
+    SDL_Point shape[size];
+
+    //rotate
+    for(int i = 0; i < size; i++) {
+        shape[i].x = sx[i] * cos(angleRad) - sy[i] * -sin(angleRad);
+        shape[i].y = sx[i] * -sin(angleRad) + sy[i] * cos(angleRad);
+    }
+
+    //translate
+    for(int i = 0; i < size; i++) {
+        shape[i].x = shape[i].x + cx;
+        shape[i].y = shape[i].y + cy;
+    }
+    shape[size - 1] = shape[0]; // close the shape
+
+    SDL_RenderDrawLines(renderer, shape, size);
+}
+
 void drawShip(SDL_Renderer *renderer, Ship *ship) {
-    float rad = ship->angle * (PI / 180.0);
-    int SHIP_LENGTH = 20;
-    int BASE_LENGTH = 10;
-
-    int x = (int) ship->x; 
-    int y = (int) ship->y;
-
-    // head
-    int hX = x + (SHIP_LENGTH * cos(rad));
-    int hY = y + (SHIP_LENGTH * -sin(rad)); // -sin to account for y growing downwards
-
-    // bottom-left vertex
-    int blX = x + (BASE_LENGTH * cos(rad - PI/2));
-    int blY = y + (BASE_LENGTH * -sin(rad - PI/2));
-
-    // bottom-right vertex
-    int brX = x + (BASE_LENGTH * cos(rad + PI/2));
-    int brY = y + (BASE_LENGTH * -sin(rad + PI/2));
-
-    SDL_Point points[4] = {
-        { hX, hY },
-        { blX, blY },
-        { brX, brY },
-        { hX, hY },
-    };
-
-    SDL_RenderDrawLines(renderer, points, 4);
-
-    if(ship->isThrusting) {
-        int midX = (blX + brX) / 2;
-        int midY = (blY + brY) / 2;
-
-        int fX = midX + (SHIP_LENGTH * cos(rad + PI));
-        int fY = midY + (SHIP_LENGTH * -sin(rad + PI));
-
-        SDL_Point flamePoints[2] = {
-            { midX, midY },
-            { fX, fY },
-        };
-        SDL_RenderDrawLines(renderer, flamePoints, 2);
-    }
+    drawPolygon(renderer, SHIP_SIDES, SHIP_SIZE, ship->x, ship->y, degToRad(ship->angle));
 }
 
-void rotateShip(Ship *ship, int degrees) {
-    ship->angle += degrees;
-
-    if (ship->angle >= 360) {
-        ship->angle -= 360;
-    } else if(ship->angle < 0) {
-        ship->angle += 360;
-    }
-}
 
 void updatePosition(Ship *ship, float deltaTime) {
     ship->x += ship->vx * deltaTime;
@@ -197,49 +188,29 @@ void stopAcceleration(Ship *ship) {
 }
 
 void initAsteroids(Asteroid *asteroids) {
-    const int MIN_SIZE = 20;
-    const int MAX_SPEED = 50;
-    for(int i = 0; i < MAX_ASTEROIDS; i++) {
+    for(int i = 0; i < ASTEROIDS_MAX; i++) {
         asteroids[i].x = rand() % SCREEN_WIDTH;
         asteroids[i].y = rand() % SCREEN_HEIGHT;
         asteroids[i].angle = (rand() % 360) * (PI / 180.0);
-        asteroids[i].vx = cos(asteroids[i].angle) * (rand() % MAX_SPEED);
-        asteroids[i].vy = -sin(asteroids[i].angle) * (rand() % MAX_SPEED);
-        asteroids[i].size = rand() % 20 + MIN_SIZE;
+        asteroids[i].vx = cos(asteroids[i].angle) * (rand() % ASTEROIDS_MAX_SPEED);
+        asteroids[i].vy = -sin(asteroids[i].angle) * (rand() % ASTEROIDS_MAX_SPEED);
+        asteroids[i].size = rand() % 20 + ASTEROIDS_MIN_SIZE;
     }
 }
 
 void updateAsteroids(Asteroid *asteroids, float deltaTime) {
-    for(int i = 0; i < MAX_ASTEROIDS; i++) {
+    for(int i = 0; i < ASTEROIDS_MAX; i++) {
         asteroids[i].x += asteroids[i].vx * deltaTime;
         asteroids[i].y += asteroids[i].vy * deltaTime;
-        asteroids[i].angle += ROTATE_DEGREES;
+        turn(&asteroids[i].angle, ASTEROIDS_ROTATE_DEGREES);
 
         wrapAround(&asteroids[i].x, &asteroids[i].y);
     }
 }
 
-void drawAsteroids(SDL_Renderer *renderer, Asteroid *asteroids) {
-    const int angleNum = 5; //pentagon
-    for(int i = 0; i < MAX_ASTEROIDS; i++) {
-        int x = (int) asteroids[i].x;
-        int y = (int) asteroids[i].y;
-        int size = (int) asteroids[i].size;
-        float angle = asteroids[i].angle;
-
-        const float angleStep = 2 * PI / angleNum;
-
-        SDL_Point points[6];
-
-        for(int j = 0; j < angleNum; j++) {
-            float originalX = size * cos(j * angleStep);
-            float originalY = size * -sin(j * angleStep);
-
-            points[j].x = (int) (x + originalX * cos(angle) - originalY * sin(angle));
-            points[j].y = (int) (y + originalX * sin(angle) + originalY * cos(angle));
-        }
-        points[5] = points[0];
-        SDL_RenderDrawLines(renderer, points, 6);
+void drawAsteroids(SDL_Renderer *renderer, Asteroid *a) {
+    for(int i = 0; i < ASTEROIDS_MAX; i++) {
+        drawPolygon(renderer, ASTEROIDS_SIDES, a[i].size, a[i].x, a[i].y, degToRad(a[i].angle));
     }
 }
 
@@ -248,6 +219,16 @@ void wrapAround(float *x, float *y) {
     if (*x > SCREEN_WIDTH) *x = 0;
     if (*y < 0.0) *y = SCREEN_HEIGHT;
     if (*y > SCREEN_HEIGHT) *y = 0;
+}
+
+void turn(float *angle, int degrees) {
+    *angle += degrees;
+
+    if (*angle >= 360) {
+        *angle -= 360;
+    } else if(*angle < 0) {
+        *angle += 360;
+    }
 }
 
 bool initSDL(SDL_Window **window, SDL_Renderer **renderer, TTF_Font **font) {
@@ -318,10 +299,10 @@ void handleInput(SDL_Event *event, InputState *input) {
 }
 
 void updateGame(Ship *ship, Asteroid *asteroids, InputState *input, float deltaTime) {
-    if(input->leftPressed) rotateShip(ship, ROTATE_DEGREES);
-    if(input->rightPressed) rotateShip(ship, -ROTATE_DEGREES);
+    if(input->leftPressed) turn(&ship->angle, SHIP_ROTATE_DEGREES);
+    if(input->rightPressed) turn(&ship->angle, -SHIP_ROTATE_DEGREES);
     if(input->forwardPressed) {
-        applyThrust(ship, THRUST);
+        applyThrust(ship, SHIP_THRUST);
     } else {
         stopAcceleration(ship);
     }
@@ -351,9 +332,9 @@ void renderGame(SDL_Renderer *renderer, Ship *ship, Asteroid *asteroids, UIEleme
     SDL_RenderCopy(renderer, ui->fpsTexture, NULL, ui->fpsRect);
     SDL_RenderCopy(renderer, ui->angleTexture, NULL, ui->angleRect);
     SDL_SetRenderDrawColor(renderer, 255, 255, 255, 255);
-    drawAsteroids(renderer, asteroids);
     drawShip(renderer, ship);
-    SDL_RenderPresent(renderer);    
+    drawAsteroids(renderer, asteroids);
+    SDL_RenderPresent(renderer);
 }
 
 SDL_Texture* renderText(SDL_Renderer *renderer, TTF_Font *font, const char *text, SDL_Rect *textRect, SDL_Color color, int x, int y) {
@@ -376,4 +357,8 @@ SDL_Texture* renderText(SDL_Renderer *renderer, TTF_Font *font, const char *text
     SDL_QueryTexture(textTexture, NULL, NULL, &textRect->w, &textRect->h);
 
     return textTexture;
+}
+
+float degToRad(float degrees) {
+    return degrees * PI / 180.0;
 }
