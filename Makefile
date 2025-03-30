@@ -1,6 +1,6 @@
 CC = gcc
 CFLAGS = -Wall -Wextra -O2
-LDFLAGS = -lSDL2 -lSDL2_ttf -lm
+LDFLAGS = -lSDL3 -lSDL3_ttf -lm
 TARGET = main
 SRC = main.c
 
