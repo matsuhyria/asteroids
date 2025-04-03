@@ -1,5 +1,5 @@
 CC = gcc
-CFLAGS = -Wall -Wextra -O2
+CFLAGS = -Wall -Wextra -g
 #LDFLAGS = -lSDL3 -lSDL3_ttf -lm
 LDFLAGS = -lSDL3 -lm
 TARGET = main
