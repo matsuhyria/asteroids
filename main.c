@@ -1,11 +1,6 @@
-#include <SDL3/SDL_oldnames.h>
-#include <SDL3/SDL_pixels.h>
-#include <SDL3/SDL_rect.h>
-#include <SDL3/SDL_render.h>
 #define SDL_MAIN_USE_CALLBACKS 1
 #include <SDL3/SDL.h>
 #include <SDL3/SDL_main.h>
-#include <stdio.h>
 
 #define W_WIDTH 800
 #define W_HEIGHT 600
@@ -39,7 +34,8 @@ typedef struct AppState {
 } AppState;
 
 Shape* createPolygon(int nsides, float sidelen);
-void drawPolygon(SDL_Renderer *r, Shape *poly, int cx, int cy, float rad);
+void transformPolygon(SDL_FPoint *vert, const Shape *poly, int cx, int cy, float rad);
+void drawPolygon(SDL_Renderer *r, SDL_FPoint *vert, int nsides);
 
 
 bool initShip(Ship *player);
@@ -78,7 +74,7 @@ SDL_AppResult handleKeyPress(Ship *s, SDL_Scancode keycode) {
     return SDL_APP_CONTINUE;
 }
 
-Shape* createPolygon(int nsides, float sidelen) {
+Shape* createPolygon(int nsides, float radius) {
     const int size = nsides + 1;
     const float angleStep = 2 * SDL_PI_F / nsides;
 
@@ -89,47 +85,47 @@ Shape* createPolygon(int nsides, float sidelen) {
 
     shape->nsides = size;
     shape->x = SDL_calloc(size, sizeof(float));
-    if(!shape->x) {
-        return NULL;
-    }
-
     shape->y = SDL_calloc(size, sizeof(float));
-    if(!shape->y) {
+    if(!shape->x || !shape->y) {
+        SDL_free(shape->x);
+        SDL_free(shape->y);
         return NULL;
     }
 
-    for(int i = 0; i < nsides; i++) {
-        shape->x[i] = sidelen * SDL_cosf(i * angleStep);
-        shape->y[i] = sidelen * (-SDL_sinf(i * angleStep));
+    // ship like nose
+    shape->x[0] = radius * 2;
+    shape->y[0] = 0;
+    for(int i = 1; i < nsides; i++) {
+        shape->x[i] = radius * SDL_cosf(i * angleStep);
+        shape->y[i] = radius * (-SDL_sinf(i * angleStep));
     }
+    // close the shape
     shape->x[nsides] = shape->x[0];
     shape->y[nsides] = shape->y[0];
     return shape;
 }
 
-void drawPolygon(SDL_Renderer *r, Shape *poly, int cx, int cy, float rad) {
-    const int nsides = poly->nsides;
+void transformPolygon(SDL_FPoint *vert, const Shape *poly, int cx, int cy, float rad) {
+    float cos = SDL_cosf(rad);
+    float sin = SDL_sinf(rad);
 
-    SDL_FPoint points[nsides];
+    for(int i = 0; i < poly->nsides; i++) {
+        float x = poly->x[i];
+        float y = poly->y[i];
 
-    // rotate
-    for(int i = 0; i < nsides; i++) {
-        points[i].x = poly->x[i] * SDL_cosf(rad) - poly->y[i] * (-SDL_sinf(rad));
-        points[i].y = poly->x[i] * (-SDL_sinf(rad)) + poly->y[i] * SDL_cosf(rad);
+        // rotate
+        vert[i].x = x * cos - y * (-sin);
+        vert[i].y = x * (-sin) + y * cos;
+
+        // translate
+        vert[i].x += cx;
+        vert[i].y += cy;
     }
+    vert[poly->nsides] = vert[0];
+}
 
-    // translate
-    for(int i = 0; i < nsides; i++) {
-        points[i].x = cx + points[i].x;
-        points[i].y = cy + points[i].y;
-    }
-    points[nsides].x = points[0].x;
-    points[nsides].y = points[0].y;
-
-    /*for(int i = 0; i < size - 1; i++) {*/
-    /*    SDL_RenderLine(r, vert[i].x, vert[i].y, vert[i+1].x, vert[i+1].y);*/
-    /*}*/
-    SDL_RenderLines(r, points, nsides);
+void drawPolygon(SDL_Renderer *r, SDL_FPoint *vert, int nsides) {
+    SDL_RenderLines(r, vert, nsides);
 }
 
 bool initShip(Ship *player) {
@@ -147,7 +143,10 @@ bool initShip(Ship *player) {
 }
 
 void drawShip(SDL_Renderer *r, Ship *player) {
-    drawPolygon(r, player->shape, player->x, player->y, degToRad(player->angle));
+    const int nsides = player->shape->nsides;
+    SDL_FPoint vert[nsides];
+    transformPolygon(vert, player->shape, player->x, player->y, degToRad(player->angle));
+    drawPolygon(r, vert, nsides);
 }
 
 void updateShip(SDL_Renderer *r, Ship *player) {
