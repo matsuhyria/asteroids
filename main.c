@@ -7,10 +7,14 @@
 #define UPDATE_STEP_MILLIS 16
 
 #define SHIP_MAX_SPEED 10
-#define SHIP_SIDE_SIZE 16
-#define SHIP_VERT_CNT 4
-#define DEG_TURN 10
-#define SPEED_INC 1
+#define SHIP_SIDE_SIZE 10
+#define SHIP_SIDE_COUNT 3
+
+typedef struct InputState {
+    bool UP;
+    bool RIGHT;
+    bool LEFT;
+} InputState;
 
 typedef struct Shape {
     int nsides;
@@ -31,6 +35,7 @@ typedef struct AppState {
     SDL_Renderer *r;
     Uint64 last;
     Ship *s;
+    InputState *is;
 } AppState;
 
 Shape* createPolygon(int nsides, float sidelen);
@@ -40,7 +45,7 @@ void drawPolygon(SDL_Renderer *r, SDL_FPoint *vert, int nsides);
 
 bool initShip(Ship *player);
 void drawShip(SDL_Renderer *r, Ship *player);
-void updateShip(SDL_Renderer *r, Ship *player);
+void updateShip(InputState *is, Ship *player);
 
 
 void accelerate(float *speed, float val);
@@ -49,24 +54,24 @@ void wrapAround(float *x, float *y);
 float degToRad(float angle);
 
 
-SDL_AppResult handleKeyPress(Ship *s, SDL_Scancode keycode);
+SDL_AppResult handleKeyPress(InputState *is, SDL_Scancode keycode, bool isPressed);
 SDL_AppResult SDL_AppInit(void **appstate, int argc, char **argv);
 SDL_AppResult SDL_AppIterate(void *appstate);
 SDL_AppResult SDL_AppEvent(void *appstate, SDL_Event *event);
 void SDL_AppQuit(void *appstate, SDL_AppResult result);
 
-SDL_AppResult handleKeyPress(Ship *s, SDL_Scancode keycode) {
+SDL_AppResult handleKeyPress(InputState *is, SDL_Scancode keycode, bool isPressed) {
     switch(keycode) {
         case SDL_SCANCODE_Q: 
             return SDL_APP_SUCCESS;
         case SDL_SCANCODE_RIGHT:
-            turn(&s->angle, -DEG_TURN);
+            is->RIGHT = isPressed;
             break;
         case SDL_SCANCODE_LEFT:
-            turn(&s->angle, DEG_TURN);
+            is->LEFT = isPressed;
             break;
         case SDL_SCANCODE_UP:
-            accelerate(&s->speed, SPEED_INC);
+            is->UP = isPressed;
             break;
         default:
             return SDL_APP_CONTINUE;
@@ -129,16 +134,16 @@ void drawPolygon(SDL_Renderer *r, SDL_FPoint *vert, int nsides) {
 }
 
 bool initShip(Ship *player) {
+    player->shape = createPolygon(SHIP_SIDE_COUNT, SHIP_SIDE_SIZE);
+    if(!player->shape) {
+        return false;
+    }
     player->x = W_WIDTH / 2.0f;
     player->y = W_HEIGHT / 2.0f;
     player->dx = 0.0f;
     player->dy = 0.0f;
     player->angle = 0.0f;
     player->speed = 0.0f;
-    player->shape = createPolygon(3, 10.0f);
-    if(!player->shape) {
-        return false;
-    }
     return true;
 }
 
@@ -149,7 +154,20 @@ void drawShip(SDL_Renderer *r, Ship *player) {
     drawPolygon(r, vert, nsides);
 }
 
-void updateShip(SDL_Renderer *r, Ship *player) {
+void updateShip(InputState *is, Ship *player) {
+    float acceleration = 0.1f;
+    float rotationSpeed = 10.0f;
+
+    if(is->LEFT) {
+        turn(&player->angle, rotationSpeed);
+    }
+    if(is->RIGHT) {
+        turn(&player->angle, -rotationSpeed);
+    }
+    if(is->UP) {
+        accelerate(&player->speed, acceleration);
+    }
+
     player->dx = player->speed * SDL_cosf(degToRad(player->angle));
     player->dy = player->speed * -SDL_sinf(degToRad(player->angle));
 
@@ -168,7 +186,7 @@ void accelerate(float *speed, float val) {
 }
 
 void turn(float *angle, float deg) {
-    *angle = *angle + deg;
+    *angle += deg;
     if(*angle >= 360) {
         *angle -= 360;
     } else if(*angle < 0){
@@ -177,15 +195,10 @@ void turn(float *angle, float deg) {
 }
 
 void wrapAround(float *x, float *y) {
-    if(*x >= W_WIDTH) {
-        *x = 0;
-    } else if(*x < 0) {
-        *x = W_WIDTH;
-    } else if(*y >= W_HEIGHT) {
-        *y = 0;
-    } else if(*y < 0){
-        *y = W_HEIGHT;
-    }
+    if(*x >= W_WIDTH) *x = 0;
+    else if(*x < 0) *x = W_WIDTH;
+    if(*y >= W_HEIGHT) *y = 0;
+    else if(*y < 0) *y = W_HEIGHT;
 }
 
 float degToRad(float angle) {
@@ -198,7 +211,7 @@ SDL_AppResult SDL_AppInit(void **appstate, int argc, char **argv) {
         return SDL_APP_FAILURE;
     }
 
-    AppState *as = (AppState *)SDL_malloc(sizeof(AppState));
+    AppState *as = SDL_malloc(sizeof(AppState));
     if (!as) {
         return SDL_APP_FAILURE;
     }
@@ -209,13 +222,19 @@ SDL_AppResult SDL_AppInit(void **appstate, int argc, char **argv) {
         return SDL_APP_FAILURE;
     }
 
-    as->s = (Ship *)SDL_malloc(sizeof(Ship));
+    as->s = SDL_malloc(sizeof(Ship));
     if(!as->s) {
         return SDL_APP_FAILURE;
     }
     if(!initShip(as->s)) {
         return SDL_APP_FAILURE;
     }
+
+    as->is = SDL_malloc(sizeof(InputState));
+    if(!as->is) {
+        return SDL_APP_FAILURE;
+    }
+    *as->is = (InputState){ 0 };
 
     as->last = SDL_GetTicks();
 
@@ -236,7 +255,7 @@ SDL_AppResult SDL_AppIterate(void *appstate) {
         SDL_RenderDebugTextFormat(as->r, 0, 0, "Angle: %.2f", as->s->angle);
         SDL_SetRenderScale(as->r, 1.0f, 1.0f);
         drawShip(as->r, as->s);
-        updateShip(as->r, as->s);
+        updateShip(as->is, as->s);
         SDL_RenderPresent(as->r);
     }
 
@@ -250,8 +269,9 @@ SDL_AppResult SDL_AppEvent(void *appstate, SDL_Event *event) {
         return SDL_APP_SUCCESS;
     }
     
-    if(event->type == SDL_EVENT_KEY_DOWN) {
-        return handleKeyPress(as->s, event->key.scancode);
+    if(event->type == SDL_EVENT_KEY_DOWN || event->type == SDL_EVENT_KEY_UP) {
+        bool isPressed = (event->type == SDL_EVENT_KEY_DOWN);
+        return handleKeyPress(as->is, event->key.scancode, isPressed);
     }
 
     return SDL_APP_CONTINUE;
@@ -264,6 +284,7 @@ void SDL_AppQuit(void *appstate, SDL_AppResult result) {
         SDL_free(as->s->shape->y);
         SDL_free(as->s->shape);
         SDL_free(as->s);
+        SDL_free(as->is);
         SDL_DestroyRenderer(as->r);
         SDL_DestroyWindow(as->w);
         SDL_free(as);
