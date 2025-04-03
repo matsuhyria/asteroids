@@ -1,3 +1,7 @@
+#include <SDL3/SDL_oldnames.h>
+#include <SDL3/SDL_pixels.h>
+#include <SDL3/SDL_rect.h>
+#include <SDL3/SDL_render.h>
 #define SDL_MAIN_USE_CALLBACKS 1
 #include <SDL3/SDL.h>
 #include <SDL3/SDL_main.h>
@@ -8,16 +12,23 @@
 #define UPDATE_STEP_MILLIS 16
 
 #define SHIP_MAX_SPEED 10
-#define SHIP_SIDE_SIZE 15
-#define SHIP_VERT_CNT 3
+#define SHIP_SIDE_SIZE 16
+#define SHIP_VERT_CNT 4
 #define DEG_TURN 10
-#define SPEED_INC 0.1
+#define SPEED_INC 1
+
+typedef struct Shape {
+    int nsides;
+    float *x;
+    float *y;
+} Shape;
 
 typedef struct Ship {
-    int x, y;
+    float x, y;
     float dx, dy;
     float angle;
     float speed;
+    Shape *shape;
 } Ship;
 
 typedef struct AppState {
@@ -27,16 +38,22 @@ typedef struct AppState {
     Ship *s;
 } AppState;
 
-SDL_AppResult handleKeyPress(Ship *s, SDL_Scancode keycode);
-void drawPolygon(SDL_Renderer *r, int nsides, int sidelen, float cx, float cy, float rad);
-void initShip(Ship *player);
+Shape* createPolygon(int nsides, float sidelen);
+void drawPolygon(SDL_Renderer *r, Shape *poly, int cx, int cy, float rad);
+
+
+bool initShip(Ship *player);
 void drawShip(SDL_Renderer *r, Ship *player);
 void updateShip(SDL_Renderer *r, Ship *player);
+
+
 void accelerate(float *speed, float val);
-void turn(float *angle, int deg);
-void wrapAround(int *x, int *y);
+void turn(float *angle, float deg);
+void wrapAround(float *x, float *y);
 float degToRad(float angle);
 
+
+SDL_AppResult handleKeyPress(Ship *s, SDL_Scancode keycode);
 SDL_AppResult SDL_AppInit(void **appstate, int argc, char **argv);
 SDL_AppResult SDL_AppIterate(void *appstate);
 SDL_AppResult SDL_AppEvent(void *appstate, SDL_Event *event);
@@ -61,48 +78,76 @@ SDL_AppResult handleKeyPress(Ship *s, SDL_Scancode keycode) {
     return SDL_APP_CONTINUE;
 }
 
-void drawPolygon(SDL_Renderer *r, int nsides, int sidelen, float cx, float cy, float rad) {
+Shape* createPolygon(int nsides, float sidelen) {
+    const int size = nsides + 1;
     const float angleStep = 2 * SDL_PI_F / nsides;
 
-    float sx[nsides];
-    float sy[nsides];
-
-    // define polygon
-    for(int i = 0; i < nsides; i++) {
-        sx[i] = sidelen * SDL_cosf(i * angleStep);
-        sy[i] = sidelen * -SDL_sinf(i * angleStep);
+    Shape *shape = SDL_malloc(sizeof(Shape));
+    if(!shape) {
+        return NULL;
     }
 
-    // rotate
-    SDL_Vertex vert[nsides];
+    shape->nsides = size;
+    shape->x = SDL_calloc(size, sizeof(float));
+    if(!shape->x) {
+        return NULL;
+    }
+
+    shape->y = SDL_calloc(size, sizeof(float));
+    if(!shape->y) {
+        return NULL;
+    }
+
     for(int i = 0; i < nsides; i++) {
-        vert[i].position.x = sx[i] * SDL_cosf(rad) - sy[i] * (-SDL_sinf(rad));
-        vert[i].position.y = sx[i] * (-SDL_sinf(rad)) + sy[i] * SDL_cosf(rad);
+        shape->x[i] = sidelen * SDL_cosf(i * angleStep);
+        shape->y[i] = sidelen * (-SDL_sinf(i * angleStep));
+    }
+    shape->x[nsides] = shape->x[0];
+    shape->y[nsides] = shape->y[0];
+    return shape;
+}
+
+void drawPolygon(SDL_Renderer *r, Shape *poly, int cx, int cy, float rad) {
+    const int nsides = poly->nsides;
+
+    SDL_FPoint points[nsides];
+
+    // rotate
+    for(int i = 0; i < nsides; i++) {
+        points[i].x = poly->x[i] * SDL_cosf(rad) - poly->y[i] * (-SDL_sinf(rad));
+        points[i].y = poly->x[i] * (-SDL_sinf(rad)) + poly->y[i] * SDL_cosf(rad);
     }
 
     // translate
-    SDL_FColor color = { 1.0f, 1.0f, 1.0f, 1.0f };
-    for(int i = 0; i < 3; i++) {
-        vert[i].position.x = cx + vert[i].position.x;
-        vert[i].position.y = cy + vert[i].position.y;
-        vert[i].color = color;
+    for(int i = 0; i < nsides; i++) {
+        points[i].x = cx + points[i].x;
+        points[i].y = cy + points[i].y;
     }
+    points[nsides].x = points[0].x;
+    points[nsides].y = points[0].y;
 
-    SDL_RenderGeometry(r, NULL, vert, 3, NULL, 0);
+    /*for(int i = 0; i < size - 1; i++) {*/
+    /*    SDL_RenderLine(r, vert[i].x, vert[i].y, vert[i+1].x, vert[i+1].y);*/
+    /*}*/
+    SDL_RenderLines(r, points, nsides);
 }
 
-void initShip(Ship *player) {
-    player->x = W_WIDTH / 2;
-    player->y = W_HEIGHT / 2;
+bool initShip(Ship *player) {
+    player->x = W_WIDTH / 2.0f;
+    player->y = W_HEIGHT / 2.0f;
     player->dx = 0.0f;
     player->dy = 0.0f;
     player->angle = 0.0f;
     player->speed = 0.0f;
+    player->shape = createPolygon(3, 10.0f);
+    if(!player->shape) {
+        return false;
+    }
+    return true;
 }
 
 void drawShip(SDL_Renderer *r, Ship *player) {
-    float rad = degToRad(player->angle);
-    drawPolygon(r, SHIP_VERT_CNT, SHIP_SIDE_SIZE, player->x, player->y, rad);
+    drawPolygon(r, player->shape, player->x, player->y, degToRad(player->angle));
 }
 
 void updateShip(SDL_Renderer *r, Ship *player) {
@@ -123,7 +168,7 @@ void accelerate(float *speed, float val) {
     }
 }
 
-void turn(float *angle, int deg) {
+void turn(float *angle, float deg) {
     *angle = *angle + deg;
     if(*angle >= 360) {
         *angle -= 360;
@@ -132,7 +177,7 @@ void turn(float *angle, int deg) {
     }
 }
 
-void wrapAround(int *x, int *y) {
+void wrapAround(float *x, float *y) {
     if(*x >= W_WIDTH) {
         *x = 0;
     } else if(*x < 0) {
@@ -154,7 +199,7 @@ SDL_AppResult SDL_AppInit(void **appstate, int argc, char **argv) {
         return SDL_APP_FAILURE;
     }
 
-    AppState *as = (AppState *)SDL_calloc(1, sizeof(AppState));
+    AppState *as = (AppState *)SDL_malloc(sizeof(AppState));
     if (!as) {
         return SDL_APP_FAILURE;
     }
@@ -169,7 +214,9 @@ SDL_AppResult SDL_AppInit(void **appstate, int argc, char **argv) {
     if(!as->s) {
         return SDL_APP_FAILURE;
     }
-    initShip(as->s);
+    if(!initShip(as->s)) {
+        return SDL_APP_FAILURE;
+    }
 
     as->last = SDL_GetTicks();
 
@@ -185,12 +232,12 @@ SDL_AppResult SDL_AppIterate(void *appstate) {
 
         SDL_SetRenderDrawColor(as->r, 0, 0, 0, SDL_ALPHA_OPAQUE);
         SDL_RenderClear(as->r);
-        drawShip(as->r, as->s);
-        updateShip(as->r, as->s);
         SDL_SetRenderDrawColor(as->r, 255, 255, 255, SDL_ALPHA_OPAQUE);
         SDL_SetRenderScale(as->r, 2.0f, 2.0f);
         SDL_RenderDebugTextFormat(as->r, 0, 0, "Angle: %.2f", as->s->angle);
         SDL_SetRenderScale(as->r, 1.0f, 1.0f);
+        drawShip(as->r, as->s);
+        updateShip(as->r, as->s);
         SDL_RenderPresent(as->r);
     }
 
@@ -214,6 +261,9 @@ SDL_AppResult SDL_AppEvent(void *appstate, SDL_Event *event) {
 void SDL_AppQuit(void *appstate, SDL_AppResult result) {
     if(appstate != NULL) {
         AppState *as = (AppState *)appstate;
+        SDL_free(as->s->shape->x);
+        SDL_free(as->s->shape->y);
+        SDL_free(as->s->shape);
         SDL_free(as->s);
         SDL_DestroyRenderer(as->r);
         SDL_DestroyWindow(as->w);
