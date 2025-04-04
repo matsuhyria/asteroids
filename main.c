@@ -1,3 +1,4 @@
+#include <SDL3/SDL_init.h>
 #define SDL_MAIN_USE_CALLBACKS 1
 #include <SDL3/SDL.h>
 #include <SDL3/SDL_main.h>
@@ -7,14 +8,17 @@
 #define UPDATE_STEP_MS 16       // run at roughly 60 fps
 
 #define SHIP_MAX_SPEED 350      // PIXELS per SECOND
-#define SHIP_SIDE_SIZE 20
+#define SHIP_SIDE_SIZE 10
 #define SHIP_SIDE_COUNT 4
 #define SHIP_ROTATION_SPEED 180 // DEGREES per SECOND
 
-static const float SHIP_RADII[] = { SHIP_SIDE_SIZE * 2.0f,
-                                    SHIP_SIDE_SIZE,
-                                    -SHIP_SIDE_SIZE * 0.5f,
-                                    SHIP_SIDE_SIZE };
+#define ASTEROIDS_COUNT 8
+
+static const float SHIP_RADII[SHIP_SIDE_COUNT] = { SHIP_SIDE_SIZE * 2.0f,
+                                                   SHIP_SIDE_SIZE,
+                                                   -SHIP_SIDE_SIZE * 0.5f,
+                                                   SHIP_SIDE_SIZE };
+
 
 typedef struct {
     int nsides;
@@ -27,7 +31,7 @@ typedef struct {
     float vx, vy;
     float angle;
     Shape *shape;
-} Ship;
+} Object;
 
 typedef struct {
     bool UP;
@@ -38,7 +42,8 @@ typedef struct {
 typedef struct {
     SDL_Window *w;
     SDL_Renderer *r;
-    Ship *s;
+    Object *s;
+    Object **a;
     InputState *is;
     Uint64 lu_ms;  // last update in ms
     Uint64 lss_ms; // last second start in ms
@@ -50,13 +55,17 @@ void transformPolygon(SDL_FPoint *vert, const Shape *poly, int cx, int cy, float
 void drawPolygon(SDL_Renderer *r, SDL_FPoint *vert, int nsides);
 
 
-bool initShip(Ship *player);
-void drawShip(SDL_Renderer *r, Ship *player);
-void updateShip(InputState *is, Ship *player, Uint64 dt);
+bool initShip(Object *player);
+void drawShip(SDL_Renderer *r, Object *player);
+void updateShip(InputState *is, Object *player, Uint64 dt);
+void freeShip(Object *player);
+
+bool initAsteroids(Object **asteroids, int size);
 
 
 void accelerate(float *vx, float *vy, float rad, float dt, float val);
 void turn(float *angle, float deg);
+// TO-D0: ADD SMOOTH WRAP AROUND
 void wrapAround(float *x, float *y);
 float degToRad(float angle);
 
@@ -128,15 +137,11 @@ void drawPolygon(SDL_Renderer *r, SDL_FPoint *vert, int nsides) {
     SDL_RenderLines(r, vert, nsides);
 }
 
-bool initShip(Ship *player) {
+bool initShip(Object *player) {
     player->shape = createCustomPolygon(SHIP_SIDE_COUNT, SHIP_RADII);
     if(!player->shape) {
         return false;
     }
-    /*player->shape = createPolygon(SHIP_SIDE_COUNT, SHIP_SIDE_SIZE);*/
-    /*if(!player->shape) {*/
-    /*    return false;*/
-    /*}*/
     player->x = W_WIDTH / 2.0f;
     player->y = W_HEIGHT / 2.0f;
     player->vx = 0.0f;
@@ -144,14 +149,14 @@ bool initShip(Ship *player) {
     return true;
 }
 
-void drawShip(SDL_Renderer *r, Ship *player) {
+void drawShip(SDL_Renderer *r, Object *player) {
     const int nsides = player->shape->nsides;
     SDL_FPoint vert[nsides];
     transformPolygon(vert, player->shape, player->x, player->y, degToRad(player->angle));
     drawPolygon(r, vert, nsides);
 }
 
-void updateShip(InputState *is, Ship *player, Uint64 dt) {
+void updateShip(InputState *is, Object *player, Uint64 dt) {
     // small deltaTime rounding error
     float deltaTime = dt / 1000.0f;
 
@@ -167,10 +172,30 @@ void updateShip(InputState *is, Ship *player, Uint64 dt) {
         accelerate(&player->vx, &player->vy, rad, deltaTime, acceleration);
     }
 
-    // UPDATE POSITION
     player->x += player->vx * deltaTime;
     player->y += player->vy * deltaTime;
     wrapAround(&player->x, &player->y);
+}
+
+void freeShip(Object *player) {
+    SDL_free(player->shape->x);
+    SDL_free(player->shape->y);
+    SDL_free(player->shape);
+    SDL_free(player);
+}
+
+bool initAsteroids(Object **asteroids, int size) {
+    return true;
+}
+
+void freeAsteroids(Object **asteroids, int size) {
+    for(int i = 0; i < size; i++) {
+        SDL_free(asteroids[i]->shape->x);
+        SDL_free(asteroids[i]->shape->y);
+        SDL_free(asteroids[i]->shape);
+        SDL_free(asteroids[i]);
+    }
+    SDL_free(asteroids);
 }
 
 void accelerate(float *vx, float *vy, float rad, float dt, float val) {
@@ -237,18 +262,19 @@ SDL_AppResult SDL_AppInit(void **appstate, int argc, char **argv) {
     if (!as) {
         return SDL_APP_FAILURE;
     }
-
     *appstate = as;
 
     if (!SDL_CreateWindowAndRenderer("Asteroids", W_WIDTH, W_HEIGHT, 0, &as->w, &as->r)) {
         return SDL_APP_FAILURE;
     }
 
-    as->s = SDL_malloc(sizeof(Ship));
-    if(!as->s) {
+    as->s = SDL_malloc(sizeof(Object));
+    if(!as->s || !initShip(as->s)) {
         return SDL_APP_FAILURE;
     }
-    if(!initShip(as->s)) {
+
+    as->a = SDL_calloc(ASTEROIDS_COUNT, sizeof(Object *));
+    if(!as->a || !initAsteroids(as->a, ASTEROIDS_COUNT)) {
         return SDL_APP_FAILURE;
     }
 
@@ -315,10 +341,8 @@ SDL_AppResult SDL_AppEvent(void *appstate, SDL_Event *event) {
 void SDL_AppQuit(void *appstate, SDL_AppResult result) {
     if(appstate != NULL) {
         AppState *as = (AppState *)appstate;
-        SDL_free(as->s->shape->x);
-        SDL_free(as->s->shape->y);
-        SDL_free(as->s->shape);
-        SDL_free(as->s);
+        freeShip(as->s);
+        freeAsteroids(as->a, ASTEROIDS_COUNT);
         SDL_free(as->is);
         SDL_DestroyRenderer(as->r);
         SDL_DestroyWindow(as->w);
