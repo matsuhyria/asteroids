@@ -4,41 +4,48 @@
 
 #define W_WIDTH 800
 #define W_HEIGHT 600
-#define UPDATE_STEP_MILLIS 16
+#define UPDATE_STEP_MS 16       // run at roughly 60 fps
 
 #define SHIP_MAX_SPEED 350      // PIXELS per SECOND
-#define SHIP_SIDE_SIZE 10
+#define SHIP_SIDE_SIZE 20
 #define SHIP_SIDE_COUNT 4
 #define SHIP_ROTATION_SPEED 180 // DEGREES per SECOND
 
-typedef struct InputState {
-    bool UP;
-    bool RIGHT;
-    bool LEFT;
-} InputState;
+static const float SHIP_RADII[] = { SHIP_SIDE_SIZE * 2.0f,
+                                    SHIP_SIDE_SIZE,
+                                    -SHIP_SIDE_SIZE * 0.5f,
+                                    SHIP_SIDE_SIZE };
 
-typedef struct Shape {
+typedef struct {
     int nsides;
     float *x;
     float *y;
 } Shape;
 
-typedef struct Ship {
+typedef struct {
     float x, y;
     float vx, vy;
     float angle;
     Shape *shape;
 } Ship;
 
-typedef struct AppState {
+typedef struct {
+    bool UP;
+    bool RIGHT;
+    bool LEFT;
+} InputState;
+
+typedef struct {
     SDL_Window *w;
     SDL_Renderer *r;
-    Uint64 last;
     Ship *s;
     InputState *is;
+    Uint64 lu_ms;  // last update in ms
+    Uint64 lss_ms; // last second start in ms
 } AppState;
 
-Shape* createPolygon(int nsides, float sidelen);
+Shape* createCustomPolygon(int nsides, const float *radii);
+Shape* createPolygon(int nsides, float radius);
 void transformPolygon(SDL_FPoint *vert, const Shape *poly, int cx, int cy, float rad);
 void drawPolygon(SDL_Renderer *r, SDL_FPoint *vert, int nsides);
 
@@ -60,9 +67,12 @@ SDL_AppResult SDL_AppIterate(void *appstate);
 SDL_AppResult SDL_AppEvent(void *appstate, SDL_Event *event);
 void SDL_AppQuit(void *appstate, SDL_AppResult result);
 
+Shape* createCustomPolygon(int nsides, const float *radii) {
+    if(nsides < 3) {
+        return NULL;
+    }
 
-Shape* createPolygon(int nsides, float radius) {
-    const int size = nsides + 1;
+    const int size = nsides + 1; // extra point to close the shape
     const float angleStep = 2 * SDL_PI_F / nsides;
 
     Shape *shape = SDL_malloc(sizeof(Shape));
@@ -76,19 +86,18 @@ Shape* createPolygon(int nsides, float radius) {
     if(!shape->x || !shape->y) {
         SDL_free(shape->x);
         SDL_free(shape->y);
+        SDL_free(shape);
         return NULL;
     }
 
-    // ship like nose
-    shape->x[0] = radius * 2;
-    shape->y[0] = 0;
-    for(int i = 1; i < nsides; i++) {
+    for(int i = 0; i < nsides; i++) {
+        float radius = radii[i];
         float rad = i * angleStep;
         float cos = SDL_cosf(rad);
         float sin = SDL_sinf(rad);
 
         shape->x[i] = radius * cos;
-        shape->y[i] = radius * (-sin);
+        shape->y[i] = radius * (-sin); // Y axis inverted
     }
     // close the shape
     shape->x[nsides] = shape->x[0];
@@ -120,10 +129,14 @@ void drawPolygon(SDL_Renderer *r, SDL_FPoint *vert, int nsides) {
 }
 
 bool initShip(Ship *player) {
-    player->shape = createPolygon(SHIP_SIDE_COUNT, SHIP_SIDE_SIZE);
+    player->shape = createCustomPolygon(SHIP_SIDE_COUNT, SHIP_RADII);
     if(!player->shape) {
         return false;
     }
+    /*player->shape = createPolygon(SHIP_SIDE_COUNT, SHIP_SIDE_SIZE);*/
+    /*if(!player->shape) {*/
+    /*    return false;*/
+    /*}*/
     player->x = W_WIDTH / 2.0f;
     player->y = W_HEIGHT / 2.0f;
     player->vx = 0.0f;
@@ -141,8 +154,6 @@ void drawShip(SDL_Renderer *r, Ship *player) {
 void updateShip(InputState *is, Ship *player, Uint64 dt) {
     // small deltaTime rounding error
     float deltaTime = dt / 1000.0f;
-    SDL_Log("Delta time %.2f", deltaTime);
-
 
     if(is->LEFT) {
         turn(&player->angle, SHIP_ROTATION_SPEED * deltaTime);
@@ -247,7 +258,8 @@ SDL_AppResult SDL_AppInit(void **appstate, int argc, char **argv) {
     }
     *as->is = (InputState){ 0 };
 
-    as->last = SDL_GetTicks();
+    as->lu_ms = SDL_GetTicks();
+    as->lss_ms = 0;
 
     return SDL_APP_CONTINUE;
 }
@@ -255,16 +267,19 @@ SDL_AppResult SDL_AppInit(void **appstate, int argc, char **argv) {
 SDL_AppResult SDL_AppIterate(void *appstate) {
     AppState *as = (AppState *)appstate;
     const Uint64 now = SDL_GetTicks();
-    const Uint64 dt = now - as->last;
-    if(dt >= UPDATE_STEP_MILLIS) {
-        as->last = now;
-        float fps = 1000.0f / dt; 
+    const Uint64 dt = now - as->lu_ms;
+    const bool secondHasPassed = (now - as->lss_ms) >= 1000;
+    static int fps = 0; 
+    static int frameCount = 0;
+    if(dt >= UPDATE_STEP_MS) {
+        frameCount++;
+        as->lu_ms = now;
         updateShip(as->is, as->s, dt);
         SDL_SetRenderDrawColor(as->r, 0, 0, 0, SDL_ALPHA_OPAQUE);
         SDL_RenderClear(as->r);
         SDL_SetRenderDrawColor(as->r, 255, 255, 255, SDL_ALPHA_OPAQUE);
         SDL_SetRenderScale(as->r, 2.0f, 2.0f);
-        SDL_RenderDebugTextFormat(as->r, 0, 0, "fps: %.2f", fps);
+        SDL_RenderDebugTextFormat(as->r, 0, 0, "fps: %d", fps);
         SDL_RenderDebugTextFormat(as->r, 0, 10, "angle: %.2f", as->s->angle);
         SDL_RenderDebugTextFormat(as->r, 0, 20, "vx: %.2f, vy: %.2f", as->s->vx, as->s->vy);
         SDL_RenderDebugTextFormat(as->r, 0, 30, "x: %.2f, y: %.2f", as->s->x, as->s->y);
@@ -273,6 +288,11 @@ SDL_AppResult SDL_AppIterate(void *appstate) {
         SDL_RenderPresent(as->r);
     }
 
+    if(secondHasPassed) {
+        fps = frameCount;
+        frameCount = 0;
+        as->lss_ms = now;
+    }
 
     return SDL_APP_CONTINUE;
 }
