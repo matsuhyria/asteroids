@@ -6,7 +6,7 @@
 #define W_HEIGHT 600
 #define UPDATE_STEP_MILLIS 16
 
-#define SHIP_MAX_SPEED 350      // UNITS per SECOND
+#define SHIP_MAX_SPEED 350      // PIXELS per SECOND
 #define SHIP_SIDE_SIZE 10
 #define SHIP_SIDE_COUNT 4
 #define SHIP_ROTATION_SPEED 180 // DEGREES per SECOND
@@ -139,7 +139,8 @@ void drawShip(SDL_Renderer *r, Ship *player) {
 }
 
 void updateShip(InputState *is, Ship *player, Uint64 dt) {
-    float deltaTime = (float)dt / 1000.0f;
+    // small deltaTime rounding error
+    float deltaTime = dt / 1000.0f;
     SDL_Log("Delta time %.2f", deltaTime);
 
 
@@ -164,7 +165,7 @@ void updateShip(InputState *is, Ship *player, Uint64 dt) {
 void accelerate(float *vx, float *vy, float rad, float dt, float val) {
     float sin = SDL_sinf(rad);
     float cos = SDL_cosf(rad);
-    
+
     // acceleration
     float ax = cos * val;
     float ay = (-sin) * val;
@@ -257,19 +258,21 @@ SDL_AppResult SDL_AppIterate(void *appstate) {
     const Uint64 dt = now - as->last;
     if(dt >= UPDATE_STEP_MILLIS) {
         as->last = now;
-
+        float fps = 1000.0f / dt; 
+        updateShip(as->is, as->s, dt);
         SDL_SetRenderDrawColor(as->r, 0, 0, 0, SDL_ALPHA_OPAQUE);
         SDL_RenderClear(as->r);
         SDL_SetRenderDrawColor(as->r, 255, 255, 255, SDL_ALPHA_OPAQUE);
         SDL_SetRenderScale(as->r, 2.0f, 2.0f);
-        SDL_RenderDebugTextFormat(as->r, 0, 0, "angle: %.2f", as->s->angle);
-        SDL_RenderDebugTextFormat(as->r, 0, 10, "vx: %.2f, vy: %.2f", as->s->vx, as->s->vy);
-        SDL_RenderDebugTextFormat(as->r, 0, 20, "x: %.2f, y: %.2f", as->s->x, as->s->y);
+        SDL_RenderDebugTextFormat(as->r, 0, 0, "fps: %.2f", fps);
+        SDL_RenderDebugTextFormat(as->r, 0, 10, "angle: %.2f", as->s->angle);
+        SDL_RenderDebugTextFormat(as->r, 0, 20, "vx: %.2f, vy: %.2f", as->s->vx, as->s->vy);
+        SDL_RenderDebugTextFormat(as->r, 0, 30, "x: %.2f, y: %.2f", as->s->x, as->s->y);
         SDL_SetRenderScale(as->r, 1.0f, 1.0f);
         drawShip(as->r, as->s);
-        updateShip(as->is, as->s, dt);
         SDL_RenderPresent(as->r);
     }
+
 
     return SDL_APP_CONTINUE;
 }
