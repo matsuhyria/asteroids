@@ -6,9 +6,10 @@
 #define W_HEIGHT 600
 #define UPDATE_STEP_MILLIS 16
 
-#define SHIP_MAX_SPEED 10
+#define SHIP_MAX_SPEED 350      // UNITS per SECOND
 #define SHIP_SIDE_SIZE 10
-#define SHIP_SIDE_COUNT 3
+#define SHIP_SIDE_COUNT 4
+#define SHIP_ROTATION_SPEED 180 // DEGREES per SECOND
 
 typedef struct InputState {
     bool UP;
@@ -24,9 +25,8 @@ typedef struct Shape {
 
 typedef struct Ship {
     float x, y;
-    float dx, dy;
+    float vx, vy;
     float angle;
-    float speed;
     Shape *shape;
 } Ship;
 
@@ -45,10 +45,10 @@ void drawPolygon(SDL_Renderer *r, SDL_FPoint *vert, int nsides);
 
 bool initShip(Ship *player);
 void drawShip(SDL_Renderer *r, Ship *player);
-void updateShip(InputState *is, Ship *player);
+void updateShip(InputState *is, Ship *player, Uint64 dt);
 
 
-void accelerate(float *speed, float val);
+void accelerate(float *vx, float *vy, float rad, float dt, float val);
 void turn(float *angle, float deg);
 void wrapAround(float *x, float *y);
 float degToRad(float angle);
@@ -60,24 +60,6 @@ SDL_AppResult SDL_AppIterate(void *appstate);
 SDL_AppResult SDL_AppEvent(void *appstate, SDL_Event *event);
 void SDL_AppQuit(void *appstate, SDL_AppResult result);
 
-SDL_AppResult handleKeyPress(InputState *is, SDL_Scancode keycode, bool isPressed) {
-    switch(keycode) {
-        case SDL_SCANCODE_Q: 
-            return SDL_APP_SUCCESS;
-        case SDL_SCANCODE_RIGHT:
-            is->RIGHT = isPressed;
-            break;
-        case SDL_SCANCODE_LEFT:
-            is->LEFT = isPressed;
-            break;
-        case SDL_SCANCODE_UP:
-            is->UP = isPressed;
-            break;
-        default:
-            return SDL_APP_CONTINUE;
-    }
-    return SDL_APP_CONTINUE;
-}
 
 Shape* createPolygon(int nsides, float radius) {
     const int size = nsides + 1;
@@ -101,8 +83,12 @@ Shape* createPolygon(int nsides, float radius) {
     shape->x[0] = radius * 2;
     shape->y[0] = 0;
     for(int i = 1; i < nsides; i++) {
-        shape->x[i] = radius * SDL_cosf(i * angleStep);
-        shape->y[i] = radius * (-SDL_sinf(i * angleStep));
+        float rad = i * angleStep;
+        float cos = SDL_cosf(rad);
+        float sin = SDL_sinf(rad);
+
+        shape->x[i] = radius * cos;
+        shape->y[i] = radius * (-sin);
     }
     // close the shape
     shape->x[nsides] = shape->x[0];
@@ -140,10 +126,8 @@ bool initShip(Ship *player) {
     }
     player->x = W_WIDTH / 2.0f;
     player->y = W_HEIGHT / 2.0f;
-    player->dx = 0.0f;
-    player->dy = 0.0f;
-    player->angle = 0.0f;
-    player->speed = 0.0f;
+    player->vx = 0.0f;
+    player->vx = 0.0f;
     return true;
 }
 
@@ -154,44 +138,51 @@ void drawShip(SDL_Renderer *r, Ship *player) {
     drawPolygon(r, vert, nsides);
 }
 
-void updateShip(InputState *is, Ship *player) {
-    float acceleration = 0.1f;
-    float rotationSpeed = 10.0f;
+void updateShip(InputState *is, Ship *player, Uint64 dt) {
+    float deltaTime = (float)dt / 1000.0f;
+    SDL_Log("Delta time %.2f", deltaTime);
+
 
     if(is->LEFT) {
-        turn(&player->angle, rotationSpeed);
+        turn(&player->angle, SHIP_ROTATION_SPEED * deltaTime);
     }
     if(is->RIGHT) {
-        turn(&player->angle, -rotationSpeed);
+        turn(&player->angle, -SHIP_ROTATION_SPEED * deltaTime);
     }
     if(is->UP) {
-        accelerate(&player->speed, acceleration);
+        float acceleration = 100.0f;
+        float rad = degToRad(player->angle);
+        accelerate(&player->vx, &player->vy, rad, deltaTime, acceleration);
     }
 
-    player->dx = player->speed * SDL_cosf(degToRad(player->angle));
-    player->dy = player->speed * -SDL_sinf(degToRad(player->angle));
-
-    player->x += player->dx;
-    player->y += player->dy;
+    // UPDATE POSITION
+    player->x += player->vx * deltaTime;
+    player->y += player->vy * deltaTime;
     wrapAround(&player->x, &player->y);
 }
 
-void accelerate(float *speed, float val) {
-    *speed += val;
-    if(*speed > SHIP_MAX_SPEED) {
-        *speed = SHIP_MAX_SPEED;
-    } else if(*speed < 0) {
-        *speed = 0;
-    }
+void accelerate(float *vx, float *vy, float rad, float dt, float val) {
+    float sin = SDL_sinf(rad);
+    float cos = SDL_cosf(rad);
+    
+    // acceleration
+    float ax = cos * val;
+    float ay = (-sin) * val;
+
+    // velocity
+    *vx += ax * dt;
+    *vy += ay * dt;
+
+    if(*vx >= SHIP_MAX_SPEED) *vx = SHIP_MAX_SPEED;
+    else if(*vx < -SHIP_MAX_SPEED) *vx = -SHIP_MAX_SPEED;
+    if(*vy >= SHIP_MAX_SPEED) *vy = SHIP_MAX_SPEED;
+    else if(*vy < -SHIP_MAX_SPEED) *vy = -SHIP_MAX_SPEED;
 }
 
 void turn(float *angle, float deg) {
     *angle += deg;
-    if(*angle >= 360) {
-        *angle -= 360;
-    } else if(*angle < 0){
-        *angle += 360;
-    }
+    if(*angle >= 360.0f) *angle -= 360.0f;
+    else if(*angle < 0.0f) *angle += 360.0f;
 }
 
 void wrapAround(float *x, float *y) {
@@ -203,6 +194,25 @@ void wrapAround(float *x, float *y) {
 
 float degToRad(float angle) {
     return (angle * SDL_PI_F) / 180.0f;
+}
+
+SDL_AppResult handleKeyPress(InputState *is, SDL_Scancode keycode, bool isPressed) {
+    switch(keycode) {
+        case SDL_SCANCODE_Q: 
+            return SDL_APP_SUCCESS;
+        case SDL_SCANCODE_RIGHT:
+            is->RIGHT = isPressed;
+            break;
+        case SDL_SCANCODE_LEFT:
+            is->LEFT = isPressed;
+            break;
+        case SDL_SCANCODE_UP:
+            is->UP = isPressed;
+            break;
+        default:
+            return SDL_APP_CONTINUE;
+    }
+    return SDL_APP_CONTINUE;
 }
 
 SDL_AppResult SDL_AppInit(void **appstate, int argc, char **argv) {
@@ -252,10 +262,12 @@ SDL_AppResult SDL_AppIterate(void *appstate) {
         SDL_RenderClear(as->r);
         SDL_SetRenderDrawColor(as->r, 255, 255, 255, SDL_ALPHA_OPAQUE);
         SDL_SetRenderScale(as->r, 2.0f, 2.0f);
-        SDL_RenderDebugTextFormat(as->r, 0, 0, "Angle: %.2f", as->s->angle);
+        SDL_RenderDebugTextFormat(as->r, 0, 0, "angle: %.2f", as->s->angle);
+        SDL_RenderDebugTextFormat(as->r, 0, 10, "vx: %.2f, vy: %.2f", as->s->vx, as->s->vy);
+        SDL_RenderDebugTextFormat(as->r, 0, 20, "x: %.2f, y: %.2f", as->s->x, as->s->y);
         SDL_SetRenderScale(as->r, 1.0f, 1.0f);
         drawShip(as->r, as->s);
-        updateShip(as->is, as->s);
+        updateShip(as->is, as->s, dt);
         SDL_RenderPresent(as->r);
     }
 
