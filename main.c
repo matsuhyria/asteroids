@@ -9,22 +9,25 @@
 
 #define SHIP_MAX_SPEED 350 // PIXELS per SECOND
 #define SHIP_SIDE_COUNT 4
-#define SHIP_SIDE_SIZE 10
+#define SHIP_BASE_RADIUS 10
 #define SHIP_ROTATION_SPEED 180 // DEGREES per SECOND
 
 #define ASTEROIDS_COUNT 8
-#define ASTEROID_MAX_SPEED 50
-#define ASTEROID_SIDE_COUNT 6
-#define ASTEROID_SIDE_SIZE 20
-#define ASTEROID_ROTATION_SPEED 5
+#define ASTEROID_MAX_SPEED 50 // PIXELS per SECOND
+#define ASTEROID_SIDE_COUNT_MIN 6
+#define ASTEROID_SIDE_COUNT_MAX 12
+#define ASTEROID_BASE_RADIUS 30
+#define ASTEROID_ROTATION_SPEED 90 // DEGREES per SECOND
+
+#define RAND_SIGN() (SDL_rand(2) == 0 ? 1 : -1)
 
 static const float SHIP_RADII[SHIP_SIDE_COUNT] = {
-    SHIP_SIDE_SIZE * 2.0f, SHIP_SIDE_SIZE, -SHIP_SIDE_SIZE * 0.5f,
-    SHIP_SIDE_SIZE};
+    SHIP_BASE_RADIUS * 2.0f, SHIP_BASE_RADIUS, 
+    -SHIP_BASE_RADIUS * 0.5f,SHIP_BASE_RADIUS};
 
-static const float ASTEROID_RADII[ASTEROID_SIDE_COUNT] = {
-    ASTEROID_SIDE_SIZE, ASTEROID_SIDE_SIZE, ASTEROID_SIDE_SIZE,
-    ASTEROID_SIDE_SIZE, ASTEROID_SIDE_SIZE, ASTEROID_SIDE_SIZE};
+static const float ASTEROID_RADII[ASTEROID_SIDE_COUNT_MIN] = {
+    ASTEROID_BASE_RADIUS, ASTEROID_BASE_RADIUS, ASTEROID_BASE_RADIUS,
+    ASTEROID_BASE_RADIUS, ASTEROID_BASE_RADIUS, ASTEROID_BASE_RADIUS};
 
 typedef struct {
   int nsides;
@@ -55,16 +58,19 @@ typedef struct {
   Uint64 lss_ms; // last second start in ms
 } AppState;
 
-Shape *createCustomPolygon(int nsides, const float *radii);
-void transformPolygon(SDL_FPoint *vert, const Shape *poly, int cx, int cy,
-                      float rad);
+Shape *createCustomPolygon(const float *radii, int nsides);
+void transformPolygon(SDL_FPoint *vert, const Shape *poly, int cx, int cy, float rad);
 void drawPolygon(SDL_Renderer *r, SDL_FPoint *vert, int nsides);
+
+void drawObject(SDL_Renderer *r, Object *obj);
+void updateObject(Object *obj, Uint64 dt);
 
 bool initShip(Object *player);
 void drawShip(SDL_Renderer *r, Object *player);
 void updateShip(InputState *is, Object *player, Uint64 dt);
 void freeShip(Object *player);
 
+void createAsteroidRadii(float *radii, int nsides);
 bool initAsteroids(Object **asteroids, int size);
 void drawAsteroids(SDL_Renderer *r, Object **asteroids, int size);
 void updateAsteroids(Object **asteroids, int size, Uint64 dt);
@@ -76,14 +82,13 @@ void turn(float *angle, float deg);
 void wrapAround(float *x, float *y);
 float degToRad(float angle);
 
-SDL_AppResult handleKeyPress(InputState *is, SDL_Scancode keycode,
-                             bool isPressed);
+SDL_AppResult handleKeyPress(InputState *is, SDL_Scancode keycode, bool isPressed);
 SDL_AppResult SDL_AppInit(void **appstate, int argc, char **argv);
 SDL_AppResult SDL_AppIterate(void *appstate);
 SDL_AppResult SDL_AppEvent(void *appstate, SDL_Event *event);
 void SDL_AppQuit(void *appstate, SDL_AppResult result);
 
-Shape *createCustomPolygon(int nsides, const float *radii) {
+Shape *createCustomPolygon(const float *radii, int nsides) {
   if (nsides < 3) {
     return NULL;
   }
@@ -121,8 +126,7 @@ Shape *createCustomPolygon(int nsides, const float *radii) {
   return shape;
 }
 
-void transformPolygon(SDL_FPoint *vert, const Shape *poly, int cx, int cy,
-                      float rad) {
+void transformPolygon(SDL_FPoint *vert, const Shape *poly, int cx, int cy, float rad) {
   float cos = SDL_cosf(rad);
   float sin = SDL_sinf(rad);
 
@@ -145,8 +149,31 @@ void drawPolygon(SDL_Renderer *r, SDL_FPoint *vert, int nsides) {
   SDL_RenderLines(r, vert, nsides);
 }
 
+void drawObject(SDL_Renderer *r, Object *obj) {
+  const int nsides = obj->shape->nsides;
+  const float x = obj->x;
+  const float y = obj->y;
+  const float rad = degToRad(obj->angle);
+  const Shape* shape = obj->shape;
+  SDL_FPoint vert[nsides];
+
+  transformPolygon(vert, shape, x, y, rad);
+
+  drawPolygon(r, vert, nsides);
+}
+
+void updateObject(Object *obj, Uint64 dt) {
+  // small deltaTime rounding error
+  // TO-DO: calc the same thing over and over
+  float deltaTime = dt / 1000.0f;
+
+  obj->x += obj->vx * deltaTime;
+  obj->y += obj->vy * deltaTime;
+  wrapAround(&obj->x, &obj->y);
+}
+
 bool initShip(Object *player) {
-  player->shape = createCustomPolygon(SHIP_SIDE_COUNT, SHIP_RADII);
+  player->shape = createCustomPolygon(SHIP_RADII, SHIP_SIDE_COUNT);
   if (!player->shape) {
     return false;
   }
@@ -159,15 +186,10 @@ bool initShip(Object *player) {
 }
 
 void drawShip(SDL_Renderer *r, Object *player) {
-  const int nsides = player->shape->nsides;
-  SDL_FPoint vert[nsides];
-  transformPolygon(vert, player->shape, player->x, player->y,
-                   degToRad(player->angle));
-  drawPolygon(r, vert, nsides);
+  drawObject(r, player);
 }
 
 void updateShip(InputState *is, Object *player, Uint64 dt) {
-  // small deltaTime rounding error
   float deltaTime = dt / 1000.0f;
 
   if (is->LEFT) {
@@ -181,10 +203,7 @@ void updateShip(InputState *is, Object *player, Uint64 dt) {
     float rad = degToRad(player->angle);
     accelerate(&player->vx, &player->vy, rad, deltaTime, acceleration);
   }
-
-  player->x += player->vx * deltaTime;
-  player->y += player->vy * deltaTime;
-  wrapAround(&player->x, &player->y);
+  updateObject(player, dt);
 }
 
 void freeShip(Object *player) {
@@ -194,46 +213,44 @@ void freeShip(Object *player) {
   SDL_free(player);
 }
 
+void createAsteroidRadii(float *radii, int nsides) {
+  float jitter = ASTEROID_BASE_RADIUS * 0.2f;
+  for(int i = 0; i < nsides; i++) {
+    radii[i] = ASTEROID_BASE_RADIUS + (RAND_SIGN() * jitter);
+  }
+}
+
 bool initAsteroids(Object **asteroids, int size) {
   for (int i = 0; i < size; i++) {
     asteroids[i] = SDL_malloc(sizeof(Object));
     if(!asteroids[i]) {
       return false;
     }
-    asteroids[i]->shape = createCustomPolygon(ASTEROID_SIDE_COUNT, ASTEROID_RADII);
-    asteroids[i]->x = SDL_rand(W_WIDTH) + 1;
-    asteroids[i]->y = SDL_rand(W_HEIGHT) + 1;
-    asteroids[i]->vx = SDL_rand(ASTEROID_MAX_SPEED) + 10.0f;
-    asteroids[i]->vy = SDL_rand(ASTEROID_MAX_SPEED) + 10.0f;
+    const int SIDE_COUNT = ASTEROID_SIDE_COUNT_MAX - SDL_rand(7);
+    float RADII[SIDE_COUNT];
+    createAsteroidRadii(RADII, SIDE_COUNT);
+    asteroids[i]->shape = createCustomPolygon(RADII, SIDE_COUNT);
+    asteroids[i]->x = SDL_rand(W_WIDTH) + ASTEROID_BASE_RADIUS;
+    asteroids[i]->y = SDL_rand(W_HEIGHT) + ASTEROID_BASE_RADIUS;
+    asteroids[i]->vx = RAND_SIGN() * SDL_rand(ASTEROID_MAX_SPEED);
+    asteroids[i]->vy = RAND_SIGN() * SDL_rand(ASTEROID_MAX_SPEED);
     asteroids[i]->angle = SDL_rand(360);
   }
   return true;
 }
 
-// TO-DO: refactor with drawShip
 void drawAsteroids(SDL_Renderer *r, Object **asteroids, int size) {
   for(int i = 0; i < size; i++) {
-    const int nsides = asteroids[i]->shape->nsides;
-    float x = asteroids[i]->x;
-    float y = asteroids[i]->y;
-    float rad = degToRad(asteroids[i]->angle);
-    SDL_FPoint vert[nsides];
-    transformPolygon(vert, asteroids[i]->shape, x, y, rad);
-    drawPolygon(r, vert, nsides);
+    drawObject(r, asteroids[i]);
   }
 }
 
 void updateAsteroids(Object **asteroids, int size, Uint64 dt) {
-  // small deltaTime rounding error
   float deltaTime = dt / 1000.0f;
-  
   for(int i = 0; i < size; i++) {
-    asteroids[i]->x += asteroids[i]->vx * deltaTime;
-    asteroids[i]->y += asteroids[i]->vy * deltaTime;
-    asteroids[i]->angle += ASTEROID_ROTATION_SPEED;
-    wrapAround(&asteroids[i]->x, &asteroids[i]->y);
+    turn(&asteroids[i]->angle, ASTEROID_ROTATION_SPEED * deltaTime);
+    updateObject(asteroids[i], dt);
   }
-
 }
 
 void freeAsteroids(Object **asteroids, int size) {
