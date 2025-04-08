@@ -8,7 +8,7 @@
 #define UPDATE_STEP_MS 16 // run at roughly 60 fps
 
 #define PHOTON_COUNT 8
-#define PHOTON_MAX_SPEED 50
+#define PHOTON_SPEED 50
 #define PHOTON_BASE_RADIUS 2
 
 #define SHIP_SIDE_COUNT 4
@@ -64,7 +64,7 @@ typedef struct {
   SDL_Renderer *r;
   Object *s;
   Object **a;
-  Photon **p;
+  Photon *p;
   InputState *is;
   Uint64 lu_ms;  // last update in ms
   Uint64 lss_ms; // last second start in ms
@@ -297,11 +297,33 @@ void freeAsteroids(Object **asteroids, int size) {
 }
 
 Photon *createPhoton(float x, float y, float radians, float radius) {
-  return NULL;
+  Photon *photon = SDL_malloc(sizeof(Photon));
+  if(!photon) {
+    return NULL;
+  }
+  photon->x = x;
+  photon->y = y;
+  photon->dx = radius * SDL_cosf(radians);
+  photon->dy = radius * (-SDL_sinf(radians));
+  return photon;
 }
 
 void drawPhoton(SDL_Renderer *r, Photon *photon) {
-  
+  const int size = 20 + 1; // extra point to close the shape
+  const int angleStep = 360 / 20;
+  SDL_FPoint circle[size];
+  const float radius = PHOTON_BASE_RADIUS;
+  for(int i = 0; i < size - 1; i++) {
+    int tableIndex = (i * angleStep) % 360; 
+
+    circle[i].x = radius * cos_table[tableIndex];
+    circle[i].y = radius * (-sin_table[tableIndex]);
+    circle[i].x += photon->x;
+    circle[i].y += photon->y;
+  }
+  circle[size - 1].x = circle[0].x;
+  circle[size - 1].y = circle[0].y;
+  drawPolygon(r, circle, size);
 }
 
 void updatePhoton(Photon *photon, Uint64 dt) {
@@ -420,7 +442,8 @@ SDL_AppResult SDL_AppInit(void **appstate, int argc, char **argv) {
     return SDL_APP_FAILURE;
   }
 
-  as->p = SDL_calloc(PHOTON_COUNT, sizeof(Photon *));
+  /*as->p = SDL_calloc(PHOTON_COUNT, sizeof(Photon *));*/
+  as->p = createPhoton(400, 300, 0, PHOTON_BASE_RADIUS);
   if(!as->p) {
     return SDL_APP_FAILURE;
   }
@@ -452,6 +475,7 @@ SDL_AppResult SDL_AppIterate(void *appstate) {
     as->lu_ms = now;
     updateShip(as->is, as->s, dt);
     updateAsteroids(as->a, ASTEROID_COUNT, dt);
+    updatePhoton(as->p, dt);
     SDL_SetRenderDrawColor(as->r, 0, 0, 0, SDL_ALPHA_OPAQUE);
     SDL_RenderClear(as->r);
     SDL_SetRenderDrawColor(as->r, 255, 255, 255, SDL_ALPHA_OPAQUE);
@@ -465,6 +489,7 @@ SDL_AppResult SDL_AppIterate(void *appstate) {
     SDL_SetRenderScale(as->r, 1.0f, 1.0f);
     drawShip(as->r, as->s);
     drawAsteroids(as->r, as->a, ASTEROID_COUNT);
+    drawPhoton(as->r, as->p);
     SDL_RenderPresent(as->r);
   }
 
@@ -472,6 +497,12 @@ SDL_AppResult SDL_AppIterate(void *appstate) {
     fps = frameCount;
     frameCount = 0;
     as->lss_ms = now;
+    if(as->p) {
+      SDL_free(as->p);
+    }
+    as->p = createPhoton(400, 300, degToRad(as->s->angle), PHOTON_BASE_RADIUS);
+    SDL_Log("Photon created at %d, %d", as->p->x, as->p->y);
+    SDL_Log("Its moving to %d, %d", as->p->dx, as->p->dy);
   }
 
   return SDL_APP_CONTINUE;
@@ -497,7 +528,8 @@ void SDL_AppQuit(void *appstate, SDL_AppResult result) {
     AppState *as = (AppState *)appstate;
     freeShip(as->s);
     freeAsteroids(as->a, ASTEROID_COUNT);
-    freePhotons(as->p, PHOTON_COUNT);
+    SDL_free(as->p);
+    //freePhotons(as->p, PHOTON_COUNT);
     SDL_free(as->is);
     SDL_DestroyRenderer(as->r);
     SDL_DestroyWindow(as->w);
