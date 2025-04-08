@@ -7,12 +7,16 @@
 #define W_HEIGHT 600
 #define UPDATE_STEP_MS 16 // run at roughly 60 fps
 
-#define SHIP_MAX_SPEED 350 // PIXELS per SECOND
+#define PHOTON_COUNT 8
+#define PHOTON_MAX_SPEED 50
+#define PHOTON_BASE_RADIUS 2
+
 #define SHIP_SIDE_COUNT 4
+#define SHIP_MAX_SPEED 350 // PIXELS per SECOND
 #define SHIP_BASE_RADIUS 10
 #define SHIP_ROTATION_SPEED 180 // DEGREES per SECOND
 
-#define ASTEROIDS_COUNT 8
+#define ASTEROID_COUNT 8
 #define ASTEROID_MAX_SPEED 50 // PIXELS per SECOND
 #define ASTEROID_SIDE_COUNT_MIN 6
 #define ASTEROID_SIDE_COUNT_MAX 12
@@ -25,9 +29,16 @@ static const float SHIP_RADII[SHIP_SIDE_COUNT] = {
     SHIP_BASE_RADIUS * 2.0f, SHIP_BASE_RADIUS, 
     -SHIP_BASE_RADIUS * 0.5f,SHIP_BASE_RADIUS};
 
-static const float ASTEROID_RADII[ASTEROID_SIDE_COUNT_MIN] = {
-    ASTEROID_BASE_RADIUS, ASTEROID_BASE_RADIUS, ASTEROID_BASE_RADIUS,
-    ASTEROID_BASE_RADIUS, ASTEROID_BASE_RADIUS, ASTEROID_BASE_RADIUS};
+#define NUM_POINTS 360
+static float sin_table[NUM_POINTS];
+static float cos_table[NUM_POINTS];
+
+typedef struct {
+  float x;
+  float y;
+  float dx;
+  float dy;
+} Photon;
 
 typedef struct {
   int nsides;
@@ -53,6 +64,7 @@ typedef struct {
   SDL_Renderer *r;
   Object *s;
   Object **a;
+  Photon **p;
   InputState *is;
   Uint64 lu_ms;  // last update in ms
   Uint64 lss_ms; // last second start in ms
@@ -76,11 +88,17 @@ void drawAsteroids(SDL_Renderer *r, Object **asteroids, int size);
 void updateAsteroids(Object **asteroids, int size, Uint64 dt);
 void freeAsteroids(Object **asteroids, int size);
 
+Photon *createPhoton(float x, float y, float radians, float radius);
+void drawPhoton(SDL_Renderer *r, Photon *photon);
+void updatePhoton(Photon *photon, Uint64 dt);
+void freePhotons(Photon **photons, int size);
+
 void accelerate(float *vx, float *vy, float rad, float dt, float val);
 void turn(float *angle, float deg);
 // TO-D0: ADD SMOOTH WRAP AROUND
 void wrapAround(float *x, float *y);
 float degToRad(float angle);
+void initTrigTables(int npoints);
 
 SDL_AppResult handleKeyPress(InputState *is, SDL_Scancode keycode, bool isPressed);
 SDL_AppResult SDL_AppInit(void **appstate, int argc, char **argv);
@@ -94,7 +112,7 @@ Shape *createCustomPolygon(const float *radii, int nsides) {
   }
 
   const int size = nsides + 1; // extra point to close the shape
-  const float angleStep = 2 * SDL_PI_F / nsides;
+  const int angleStep = 360 / nsides;
 
   Shape *shape = SDL_malloc(sizeof(Shape));
   if (!shape) {
@@ -113,12 +131,10 @@ Shape *createCustomPolygon(const float *radii, int nsides) {
 
   for (int i = 0; i < nsides; i++) {
     float radius = radii[i];
-    float rad = i * angleStep;
-    float cos = SDL_cosf(rad);
-    float sin = SDL_sinf(rad);
+    int tableIndex = (i * angleStep) % 360;
 
-    shape->x[i] = radius * cos;
-    shape->y[i] = radius * (-sin); // Y axis inverted
+    shape->x[i] = radius * cos_table[tableIndex];
+    shape->y[i] = radius * (-sin_table[tableIndex]); // Y axis inverted
   }
   // close the shape
   shape->x[nsides] = shape->x[0];
@@ -150,16 +166,33 @@ void drawPolygon(SDL_Renderer *r, SDL_FPoint *vert, int nsides) {
 }
 
 void drawObject(SDL_Renderer *r, Object *obj) {
-  const int nsides = obj->shape->nsides;
   const float x = obj->x;
   const float y = obj->y;
   const float rad = degToRad(obj->angle);
+  const int nsides = obj->shape->nsides;
   const Shape* shape = obj->shape;
   SDL_FPoint vert[nsides];
 
   transformPolygon(vert, shape, x, y, rad);
 
   drawPolygon(r, vert, nsides);
+
+  // NEEDED FOR DEBUGGING
+  const int size = 20 + 1; // extra point to close the shape
+  const int angleStep = 360 / 20;
+  SDL_FPoint circle[size];
+  const float radius = ASTEROID_BASE_RADIUS + (ASTEROID_BASE_RADIUS * 0.2f);
+  for(int i = 0; i < size - 1; i++) {
+    int tableIndex = (i * angleStep) % 360; 
+
+    circle[i].x = radius * cos_table[tableIndex];
+    circle[i].y = radius * (-sin_table[tableIndex]);
+    circle[i].x += x;
+    circle[i].y += y;
+  }
+  circle[size - 1].x = circle[0].x;
+  circle[size - 1].y = circle[0].y;
+  drawPolygon(r, circle, size);
 }
 
 void updateObject(Object *obj, Uint64 dt) {
@@ -263,6 +296,29 @@ void freeAsteroids(Object **asteroids, int size) {
   SDL_free(asteroids);
 }
 
+Photon *createPhoton(float x, float y, float radians, float radius) {
+  return NULL;
+}
+
+void drawPhoton(SDL_Renderer *r, Photon *photon) {
+  
+}
+
+void updatePhoton(Photon *photon, Uint64 dt) {
+  float deltaTime = dt / 1000.0f;
+  photon->x += photon->dx * deltaTime;
+  photon->y += photon->dy * deltaTime;
+}
+
+void freePhotons(Photon **photons, int size) {
+  for(int i = 0; i < size; i++) {
+    if(photons[i]) {
+      SDL_free(photons[i]);
+    }
+  }
+  SDL_free(photons);
+}
+
 void accelerate(float *vx, float *vy, float rad, float dt, float val) {
   float sin = SDL_sinf(rad);
   float cos = SDL_cosf(rad);
@@ -306,6 +362,15 @@ void wrapAround(float *x, float *y) {
 
 float degToRad(float angle) { return (angle * SDL_PI_F) / 180.0f; }
 
+void initTrigTables(int npoints) {
+  float angleStep = SDL_PI_F / 180.0f;
+  for(int i = 0; i < npoints; i++) {
+    float angle = i * angleStep;
+    sin_table[i] = SDL_sinf(angle);
+    cos_table[i] = SDL_cosf(angle);
+  }
+}
+
 SDL_AppResult handleKeyPress(InputState *is, SDL_Scancode keycode,
                              bool isPressed) {
   switch (keycode) {
@@ -343,13 +408,20 @@ SDL_AppResult SDL_AppInit(void **appstate, int argc, char **argv) {
     return SDL_APP_FAILURE;
   }
 
+  initTrigTables(NUM_POINTS);
+
   as->s = SDL_malloc(sizeof(Object));
   if (!as->s || !initShip(as->s)) {
     return SDL_APP_FAILURE;
   }
 
-  as->a = SDL_calloc(ASTEROIDS_COUNT, sizeof(Object *));
-  if (!as->a || !initAsteroids(as->a, ASTEROIDS_COUNT)) {
+  as->a = SDL_calloc(ASTEROID_COUNT, sizeof(Object *));
+  if (!as->a || !initAsteroids(as->a, ASTEROID_COUNT)) {
+    return SDL_APP_FAILURE;
+  }
+
+  as->p = SDL_calloc(PHOTON_COUNT, sizeof(Photon *));
+  if(!as->p) {
     return SDL_APP_FAILURE;
   }
 
@@ -379,7 +451,7 @@ SDL_AppResult SDL_AppIterate(void *appstate) {
     frameCount++;
     as->lu_ms = now;
     updateShip(as->is, as->s, dt);
-    updateAsteroids(as->a, ASTEROIDS_COUNT, dt);
+    updateAsteroids(as->a, ASTEROID_COUNT, dt);
     SDL_SetRenderDrawColor(as->r, 0, 0, 0, SDL_ALPHA_OPAQUE);
     SDL_RenderClear(as->r);
     SDL_SetRenderDrawColor(as->r, 255, 255, 255, SDL_ALPHA_OPAQUE);
@@ -392,7 +464,7 @@ SDL_AppResult SDL_AppIterate(void *appstate) {
                               as->s->y);
     SDL_SetRenderScale(as->r, 1.0f, 1.0f);
     drawShip(as->r, as->s);
-    drawAsteroids(as->r, as->a, ASTEROIDS_COUNT);
+    drawAsteroids(as->r, as->a, ASTEROID_COUNT);
     SDL_RenderPresent(as->r);
   }
 
@@ -424,7 +496,8 @@ void SDL_AppQuit(void *appstate, SDL_AppResult result) {
   if (appstate != NULL) {
     AppState *as = (AppState *)appstate;
     freeShip(as->s);
-    freeAsteroids(as->a, ASTEROIDS_COUNT);
+    freeAsteroids(as->a, ASTEROID_COUNT);
+    freePhotons(as->p, PHOTON_COUNT);
     SDL_free(as->is);
     SDL_DestroyRenderer(as->r);
     SDL_DestroyWindow(as->w);
